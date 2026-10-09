@@ -151,56 +151,58 @@ def slug(s):
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
 
 
+def marks_of(lines, ch_idx):
+    """Sum the printed **[n]** marks. Unmarked questions get an estimate (flagged)."""
+    text = "\n".join(lines)
+    ms = [int(x) for x in re.findall(r"\*\*\[(\d+)\]\*\*", text)]
+    if ms:
+        return sum(ms), False
+    text = re.sub(r"\$[^$]*\$", "", text)
+    toks = re.findall(r"(?:^|\s)(\([a-z]\)|i{1,3}\.|iv\.)(?=\s)", text, re.M)
+    leaves = 0
+    for i, t in enumerate(toks):
+        nxt = toks[i + 1] if i + 1 < len(toks) else None
+        if not t.startswith("(") or not (nxt and not nxt.startswith("(")):
+            leaves += 1
+    return max(1, leaves) * (1 if ch_idx == 4 else 3), True
+
+
+def short_title(t):
+    return re.sub(r"^Chapter \d+\s*[—-]\s*", "", t)
+
+
 def build(chapters):
-    nav, body = [], []
-    total = 0
-    for ci, ch in enumerate(chapters, 1):
-        cid = f"ch{ci}"
-        nav.append(f'<div class="nav-ch"><a href="#{cid}">{html.escape(ch["title"])}</a><ul>')
-        body.append(f'<section class="chapter" id="{cid}"><h2>{html.escape(ch["title"])}</h2>')
+    data = {"chapters": [{"title": short_title(c["title"])} for c in chapters], "questions": []}
+    for ci, ch in enumerate(chapters):
         for pi, p in enumerate(ch["papers"], 1):
-            pid = f"{cid}-p{pi}"
-            nq = sum(1 for k, _ in p["items"] if k == "q")
-            total += nq
-            nav.append(f'<li><a href="#{pid}">{html.escape(p["title"])}</a></li>')
-            meta = "".join(f'<p class="meta">{inline(m)}</p>' for m in p["meta"])
-            body.append(
-                f'<details class="paper" id="{pid}"><summary><span class="ptitle">'
-                f'{html.escape(p["title"])}</span><span class="count">{nq} questions</span></summary>{meta}'
-            )
             sec = ""
+            paper_total = 0
             for kind, item in p["items"]:
                 if kind == "section":
-                    sec = slug(item)
-                    body.append(f'<h4 class="section">{html.escape(item)}</h4>')
+                    sec = item
                     continue
-                qid = f"{pid}-{sec + '-' if sec else ''}q{re.sub(r'[^0-9]', '', item['title'])}"
-                inner = render_question(item)
-                body.append(
-                    f'<article class="q" id="{qid}" data-text="{html.escape(plain(" ".join(item["lines"])), quote=True)}">'
-                    f'<header><h3>{html.escape(item["title"])}</h3>'
-                    f'<label class="done"><input type="checkbox" data-q="{qid}"> done</label></header>'
-                    f"{inner}</article>"
-                )
-            if p["key"]:
-                items = "".join(f"<li>{inline(k)}</li>" for k in p["key"])
-                body.append(
-                    f'<details class="key"><summary>{inline(p.get("key_title", "Answer key"))}</summary>'
-                    f"<ul>{items}</ul></details>"
-                )
-            body.append("</details>")
-        nav.append("</ul></div>")
-        body.append("</section>")
-    return "\n".join(nav), "\n".join(body), total
+                num = re.sub(r"[^0-9]", "", item["title"])
+                marks, est = marks_of(item["lines"], ci)
+                if not est:
+                    paper_total += marks
+                data["questions"].append({
+                    "id": f"c{ci + 1}p{pi}{slug(sec)}q{num}",
+                    "ch": ci, "paper": p["title"], "section": sec, "num": int(num),
+                    "marks": marks, "est": est,
+                    "html": render_question(item),
+                    "text": plain(" ".join(item["lines"])),
+                })
+            print(f"  {p['title']}: {paper_total} printed marks")
+    return data
 
 
 TEMPLATE = (HERE / "template.html").read_text(encoding="utf8")
 
 if __name__ == "__main__":
+    import json
     chapters = parse(SRC.read_text(encoding="utf8"))
-    nav, body, total = build(chapters)
-    OUT.write_text(
-        TEMPLATE.replace("{{NAV}}", nav).replace("{{BODY}}", body).replace("{{TOTAL}}", str(total)),
-        encoding="utf8",
-    )
-    print(f"wrote {OUT} - {len(chapters)} chapters, {total} questions")
+    data = build(chapters)
+    blob = json.dumps(data, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+    OUT.write_text(TEMPLATE.replace("{{DATA}}", blob), encoding="utf8")
+    n = len(data["questions"])
+    print(f"wrote {OUT} - {n} questions, {sum(1 for q in data['questions'] if q['est'])} with estimated marks")
