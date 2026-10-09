@@ -36,6 +36,7 @@ def inline(text):
         return f"<em{cls}>{body}</em>"
 
     text = re.sub(r"\*(?!\s)([^*]+?)\*", em, text)
+    text = re.sub(r"\{((?:[MARN]\d)|AG)\}", r'<span class="ms">\1</span>', text)
     text = re.sub(r"  +", '<span class="gap"></span>', text)
     return re.sub(
         r"\x00(\d+)\x00",
@@ -244,11 +245,54 @@ def build():
     return data
 
 
+ANSWER_FILES = ["answers/gr11.md", "answers/gr12.md"]
+
+
+def load_answers():
+    """{question id: list of lines} from the answer files."""
+    out, cur = {}, None
+    for f in ANSWER_FILES:
+        path = HERE / f
+        if not path.exists():
+            continue
+        md = re.sub(r"<!--.*?-->", "", path.read_text(encoding="utf8"), flags=re.S)
+        for line in md.splitlines():
+            if line.startswith("## "):
+                cur = line[3:].strip()
+                out[cur] = []
+            elif cur is not None and not line.startswith("# "):
+                out[cur].append(line.rstrip())
+    return out
+
+
+def scheme_marks(lines):
+    text = re.sub(r"\$[^$]*\$", "", "\n".join(lines))
+    return sum(int(n) for n in re.findall(r"\{[MARN](\d)\}", text))
+
+
+def attach_answers(data):
+    answers = load_answers()
+    ids = {q["id"] for q in data["questions"]}
+    for q in data["questions"]:
+        lines = answers.get(q["id"])
+        if not lines:
+            continue
+        q["ans"] = render_question({"lines": lines})
+        got = scheme_marks(lines)
+        if not q["est"] and got != q["marks"]:
+            print(f"  markscheme total {got} != {q['marks']} printed: {q['id']}")
+    missing = [q["id"] for q in data["questions"] if "ans" not in q]
+    extra = sorted(set(answers) - ids)
+    print(f"answers: {len(data['questions']) - len(missing)} attached, {len(missing)} missing"
+          + (f" ({' '.join(missing)})" if missing else "") + (f", unknown ids: {' '.join(extra)}" if extra else ""))
+
+
 TEMPLATE = (HERE / "template.html").read_text(encoding="utf8")
 
 if __name__ == "__main__":
     import json
     data = build()
+    attach_answers(data)
     blob = json.dumps(data, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
     OUT.write_text(TEMPLATE.replace("{{DATA}}", blob), encoding="utf8")
     qs = data["questions"]

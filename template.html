@@ -213,6 +213,11 @@ body.locked .wrap{display:none}
 .fig-missing{border:1px dashed var(--line);border-radius:6px;padding:36px 24px;min-width:220px;text-align:center;color:var(--muted);font-size:.85rem}
 .copy{margin-left:auto;background:none;border:1px solid var(--line);border-radius:6px;padding:2px 10px;font-size:.75rem;color:var(--muted);cursor:pointer}
 .copy:hover{color:var(--blue);border-color:var(--blue)}
+.ms{display:inline-block;font-size:.7rem;font-weight:700;letter-spacing:.02em;color:var(--blue);border:1px solid var(--blue);border-radius:4px;padding:0 4px;margin-left:4px;vertical-align:1px}
+details.scheme{margin-top:10px;border-top:1px dashed var(--line);padding-top:6px}
+details.scheme>summary{cursor:pointer;color:var(--blue);font-size:.85rem}
+details.scheme .qbody{font-size:.94rem}
+details.scheme .lead{color:var(--muted);font-size:.78rem;margin:6px 0 0}
 .note-line{color:var(--muted);font-size:.82rem;margin-top:10px}
 @media (max-width:520px){.grades button{padding:5px 8px}}
 @media (max-width:520px){
@@ -246,7 +251,7 @@ body.locked .wrap{display:none}
     </button>
   </header>
   <main id="view"></main>
-  <p class="disclaimer">Disclaimer: questions on this site are sourced from AI and open internet sources and may contain errors. Figures marked “Redrawn” are approximate. Not affiliated with or endorsed by the IB.</p>
+  <p class="disclaimer">Disclaimer: questions on this site are sourced from AI and open internet sources and may contain errors. Figures marked “Redrawn” are approximate. Markschemes are predicted, not official. Not affiliated with or endorsed by the IB.</p>
 </div>
 <dialog id="dlg"><h3 id="dlgT"></h3><p id="dlgP"></p>
   <div class="actions" style="margin:0"><button class="btn ghost" value="no" id="dlgNo">Cancel</button><button class="btn" id="dlgYes">OK</button></div>
@@ -281,6 +286,12 @@ function fmt(s){
 function shuffle(a){ for (var i = a.length - 1; i > 0; i--){ var j = Math.random() * (i + 1) | 0, t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
 function source(q){
   return CH[q.ch].title + ' · ' + q.paper + (q.section ? ' · ' + q.section : '') + ' · Question ' + q.num;
+}
+function schemeBox(q, open){
+  if (!q.ans) return '';
+  return '<details class="scheme"' + (open ? ' open' : '') + '><summary>Markscheme</summary>' +
+    '<p class="lead">Predicted markscheme · M = method, A = accuracy, R = reasoning, AG = answer given</p>' +
+    '<div class="qbody">' + q.ans + '</div></details>';
 }
 function copyBtn(q){ return '<button class="copy" data-copy="' + q.id + '" title="Copy question as text with LaTeX">Copy</button>'; }
 function copyText(text, btn){
@@ -527,13 +538,13 @@ function viewResults(){
       '<span class="empty">/ ' + q.marks + '</span><button class="chip" data-full="' + id + '">Full</button><button class="chip" data-zero="' + id + '">0</button></div></header>' +
       '<div class="meta" style="color:var(--muted);font-size:.8rem;margin-top:4px">' + esc(source(q)) + '</div>' +
       (t.notes[id] ? '<p style="white-space:pre-wrap;font-size:.88rem;background:var(--blue-soft);padding:8px 12px;border-radius:6px">' + esc(t.notes[id]) + '</p>' : '') +
-      '<details><summary>Show question</summary><div class="qbody">' + q.html + '</div></details></article>';
+      '<details><summary>Show question</summary><div class="qbody">' + q.html + '</div></details>' + schemeBox(q) + '</article>';
   }).join('');
   view.innerHTML =
     '<div class="grid"><section>' +
     '<h1>' + (t.timedOut ? 'Time’s up' : 'Test complete') + '</h1>' +
     '<p class="sub">' + esc(t.label) + ' · ' + t.ids.length + ' questions · ' + fmt(t.used) + ' used of ' + fmt(t.limit) + '</p>' +
-    '<div class="alert" style="margin:0 0 20px">There are no mark schemes in this bank. Check your working against your class solutions, then enter the marks you earned for each question.</div>' +
+    '<div class="alert" style="margin:0 0 20px">Open each question’s predicted markscheme, compare it with your working, then enter the marks you earned.</div>' +
     cards +
     '<div class="actions"><button class="btn ghost" data-act="retake">Retake these questions</button><a class="btn" style="text-decoration:none;text-align:center" href="#/">New test</a></div>' +
     '</section><aside id="side">' + sideResults(t) + '</aside></div>';
@@ -552,7 +563,7 @@ function award(id, v){
 var bankState = { ch: -1, term: '' };
 function bankQuestion(q, withSource){
   return '<article class="bank-q"><header><b>' + (withSource ? esc(source(q)) : 'Question ' + q.num) + '</b>' +
-    '<span class="pill' + (q.est ? ' est' : '') + '">' + marksLabel(q) + '</span>' + copyBtn(q) + '</header><div class="qbody">' + q.html + '</div></article>';
+    '<span class="pill' + (q.est ? ' est' : '') + '">' + marksLabel(q) + '</span>' + copyBtn(q) + '</header><div class="qbody">' + q.html + '</div>' + schemeBox(q) + '</article>';
 }
 function viewBank(){
   var chips = '<button class="chip' + (bankState.ch === -1 ? ' on' : '') + '" data-bch="-1">All</button>' +
