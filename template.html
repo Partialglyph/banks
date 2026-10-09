@@ -218,6 +218,8 @@ details.scheme{margin-top:10px;border-top:1px dashed var(--line);padding-top:6px
 details.scheme>summary{cursor:pointer;color:var(--blue);font-size:.85rem}
 details.scheme .qbody{font-size:.94rem}
 details.scheme .lead{color:var(--muted);font-size:.78rem;margin:6px 0 0}
+.copy + .copy{margin-left:6px}
+.pill.var{border-color:var(--green);color:var(--green)}
 .note-line{color:var(--muted);font-size:.82rem;margin-top:10px}
 @media (max-width:520px){.grades button{padding:5px 8px}}
 @media (max-width:520px){
@@ -257,6 +259,7 @@ details.scheme .lead{color:var(--muted);font-size:.78rem;margin:6px 0 0}
   <div class="actions" style="margin:0"><button class="btn ghost" value="no" id="dlgNo">Cancel</button><button class="btn" id="dlgYes">OK</button></div>
 </dialog>
 
+<script src="variants.js"></script>
 <script id="data" type="application/json">{{DATA}}</script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
@@ -287,13 +290,29 @@ function shuffle(a){ for (var i = a.length - 1; i > 0; i--){ var j = Math.random
 function source(q){
   return CH[q.ch].title + ' · ' + q.paper + (q.section ? ' · ' + q.section : '') + ' · Question ' + q.num;
 }
+var V = window.VARIANTS || { has: function(){ return false; } };
+var copyMap = {}, varCache = {};
+// the question as shown: the bank original, or a template with fresh numbers for this seed
+function resolve(id, seed){
+  var q = byId[id];
+  if (seed == null || !V.has(id)) return q;
+  var key = id + ':' + seed;
+  if (!varCache[key]){
+    var v = V.make(id, seed);
+    varCache[key] = Object.assign({}, q, { html: v.html, ans: v.ans, variant: true,
+      copy: 'Question ' + q.num + ' (' + q.marks + ' marks)\n\n' + v.copyBody });
+  }
+  return varCache[key];
+}
+function newSeed(){ return ((Math.random() * 2147483646) | 0) + 1; }
+function seedOf(t, id){ return t.seeds ? t.seeds[id] : undefined; }
 function schemeBox(q, open){
   if (!q.ans) return '';
   return '<details class="scheme"' + (open ? ' open' : '') + '><summary>Markscheme</summary>' +
     '<p class="lead">Predicted markscheme · M = method, A = accuracy, R = reasoning, AG = answer given</p>' +
     '<div class="qbody">' + q.ans + '</div></details>';
 }
-function copyBtn(q){ return '<button class="copy" data-copy="' + q.id + '" title="Copy question as text with LaTeX">Copy</button>'; }
+function copyBtn(q){ copyMap[q.id] = q.copy; return '<button class="copy" data-copy="' + q.id + '" title="Copy question as text with LaTeX">Copy</button>'; }
 function copyText(text, btn){
   function done(){ var o = btn.textContent; btn.textContent = 'Copied'; setTimeout(function(){ btn.textContent = o; }, 1400); }
   if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, fallback); else fallback();
@@ -372,11 +391,11 @@ function pick(items, target){
   while (s > 0){ var i = from[s]; out.push(a[i]); s -= a[i].marks; }
   return out;
 }
-function startTest(ids, label){
+function startTest(ids, label, seeds){
   var qs = ids.map(function(id){ return byId[id]; });
   var total = sum(qs, function(q){ return q.marks; });
   var t = { id: Date.now(), ids: ids, label: label, start: Date.now(), limit: total * 60, total: total,
-            idx: 0, status: {}, notes: {}, awarded: {}, finished: false };
+            idx: 0, status: {}, notes: {}, awarded: {}, finished: false, seeds: seeds || {} };
   saveTest(t);
   location.hash = '#/test';
 }
@@ -434,6 +453,8 @@ function viewHome(){
     '<div class="row"><input type="range" id="marks" min="5" max="150" step="1" value="' + cfg.marks + '">' +
     '<input class="num" id="marksNum" type="number" min="5" max="150" value="' + cfg.marks + '"></div>' +
     '<div class="chips" style="margin-top:12px">' + presets + '</div>' +
+    '<label class="check"><input type="checkbox" id="vary"' + (cfg.vary !== false ? ' checked' : '') + '><span>Vary the numbers ' +
+    '<span class="empty">(' + Q.filter(function(q){ return inGrade(q) && V.has(q.id); }).length + ' question types get fresh numbers each test, with matching markschemes)</span></span></label>' +
     (Q.some(function(q){ return inGrade(q) && q.est; }) ? '<label class="check"><input type="checkbox" id="est"' + (cfg.est ? ' checked' : '') + '><span>Include questions without printed marks ' +
     '<span class="empty">(marks are estimated)</span></span></label>' : '') +
     '<div class="summary" id="summary"></div><div id="warn"></div>' + (function(){
@@ -487,7 +508,7 @@ function viewTest(){
   var t = getTest();
   if (!t){ location.hash = '#/'; return; }
   if (t.finished){ location.hash = '#/results'; return; }
-  var q = byId[t.ids[t.idx]], n = t.ids.length, st = t.status[q.id];
+  var q = resolve(t.ids[t.idx], seedOf(t, t.ids[t.idx])), n = t.ids.length, st = t.status[q.id];
   var doneN = t.ids.filter(function(id){ return t.status[id] === 'done'; }).length;
   var pct = Math.round(doneN / n * 100);
   view.innerHTML =
@@ -495,10 +516,11 @@ function viewTest(){
     '<h1>' + esc(t.label) + '</h1>' +
     '<div class="progress"><div class="track"><i style="width:' + pct + '%"></i></div><span>' + pct + '%</span></div>' +
     '<div class="qhead"><b>Question ' + (t.idx + 1) + '/' + n + ':</b><span class="pill' + (q.est ? ' est' : '') + '">' + marksLabel(q) + '</span>' +
+    (q.variant ? '<span class="pill var" title="Same question type as the source paper, with new numbers">new numbers</span>' : '') +
     '<span class="pill only-narrow t-val"></span>' + copyBtn(q) + '</div>' +
     (t.pausedAt ? '<div class="paused-cover"><p>Test paused · ' + fmt(remaining(t)) + ' left</p><button class="btn" data-act="pause">Resume</button></div>' :
     '<div class="qbody">' + q.html + '</div>') +
-    '<details class="src"><summary>Source</summary><p>' + esc(source(q)) + '</p></details>' +
+    '<details class="src"><summary>Source</summary><p>' + (q.variant ? 'Based on ' : '') + esc(source(q)) + '</p></details>' +
     '<div class="opts">' +
     '<button class="opt" data-act="done" aria-pressed="' + (st === 'done') + '">' + (st === 'done' ? ico.ok : ico.none) + 'I’ve answered this question</button>' +
     '<button class="opt" data-act="flag" aria-pressed="' + (st === 'flag') + '">' + (st === 'flag' ? ico.flag : ico.none) + 'Flag to come back to</button>' +
@@ -530,13 +552,13 @@ function viewResults(){
   if (!t){ location.hash = '#/'; return; }
   if (!t.finished){ location.hash = '#/test'; return; }
   var cards = t.ids.map(function(id, i){
-    var q = byId[id], a = t.awarded[id];
+    var q = resolve(id, seedOf(t, id)), a = t.awarded[id];
     return '<article class="card" id="r-' + id + '"><header><span class="st">' + rowIcon(t, id) + '</span><b>Question ' + (i + 1) + '</b>' +
       '<span class="pill' + (q.est ? ' est' : '') + '">' + marksLabel(q) + '</span>' +
       (t.status[id] === 'flag' ? '<span class="pill est">flagged</span>' : '') +
       copyBtn(q).replace('class="copy"', 'class="copy" style="margin-left:0"') + '<div class="award"><input class="num" type="number" min="0" max="' + q.marks + '" step="1" data-aw="' + id + '" value="' + (a == null ? '' : a) + '" placeholder="–" aria-label="Marks awarded">' +
       '<span class="empty">/ ' + q.marks + '</span><button class="chip" data-full="' + id + '">Full</button><button class="chip" data-zero="' + id + '">0</button></div></header>' +
-      '<div class="meta" style="color:var(--muted);font-size:.8rem;margin-top:4px">' + esc(source(q)) + '</div>' +
+      '<div class="meta" style="color:var(--muted);font-size:.8rem;margin-top:4px">' + (q.variant ? 'New numbers, based on ' : '') + esc(source(q)) + '</div>' +
       (t.notes[id] ? '<p style="white-space:pre-wrap;font-size:.88rem;background:var(--blue-soft);padding:8px 12px;border-radius:6px">' + esc(t.notes[id]) + '</p>' : '') +
       '<details><summary>Show question</summary><div class="qbody">' + q.html + '</div></details>' + schemeBox(q) + '</article>';
   }).join('');
@@ -562,8 +584,10 @@ function award(id, v){
 
 var bankState = { ch: -1, term: '' };
 function bankQuestion(q, withSource){
-  return '<article class="bank-q"><header><b>' + (withSource ? esc(source(q)) : 'Question ' + q.num) + '</b>' +
-    '<span class="pill' + (q.est ? ' est' : '') + '">' + marksLabel(q) + '</span>' + copyBtn(q) + '</header><div class="qbody">' + q.html + '</div>' + schemeBox(q) + '</article>';
+  var vary = V.has(q.id) ? '<button class="copy" data-variant="' + q.id + '" title="Same question type with fresh numbers">New numbers</button>' +
+    (q.variant ? '<button class="copy" data-orig="' + q.id + '">Original</button>' : '') : '';
+  return '<article class="bank-q" data-id="' + q.id + '" data-src="' + (withSource ? 1 : 0) + '"><header><b>' + (withSource ? esc(source(q)) : 'Question ' + q.num) + '</b>' +
+    '<span class="pill' + (q.est ? ' est' : '') + '">' + marksLabel(q) + '</span>' + (q.variant ? '<span class="pill var">new numbers</span>' : '') + vary + copyBtn(q) + '</header><div class="qbody">' + q.html + '</div>' + schemeBox(q) + '</article>';
 }
 function viewBank(){
   var chips = '<button class="chip' + (bankState.ch === -1 ? ' on' : '') + '" data-bch="-1">All</button>' +
@@ -645,7 +669,13 @@ setInterval(tick, 1000);
 // ---------- events
 view.addEventListener('click', function(e){
   var el = e.target.closest('button, [data-go]'); if (!el) return;
-  if (el.dataset.copy){ copyText(byId[el.dataset.copy].copy, el); return; }
+  if (el.dataset.copy){ copyText(copyMap[el.dataset.copy] || byId[el.dataset.copy].copy, el); return; }
+  if (el.dataset.variant || el.dataset.orig){
+    var art = el.closest('.bank-q'), qid = el.dataset.variant || el.dataset.orig;
+    art.outerHTML = bankQuestion(el.dataset.variant ? resolve(qid, newSeed()) : byId[qid], art.dataset.src === '1');
+    typeset($('.bank-q[data-id="' + qid + '"]'));
+    return;
+  }
   var t = getTest();
   if (el.dataset.topic != null){
     var i = +el.dataset.topic, k = cfg.topics.indexOf(i);
@@ -659,7 +689,9 @@ view.addEventListener('click', function(e){
       qs.sort(function(a, b){ return a.ch - b.ch; });
       var gc = gradeCh(), names = gc.filter(function(i){ return cfg.topics.indexOf(i) !== -1; }).map(function(i){ return CH[i].title; });
       var label = 'Gr ' + cfg.grade + ' · ' + (names.length === gc.length ? 'Mixed test' : names.length > 2 ? names.length + '-topic test' : names.join(' & '));
-      startTest(qs.map(function(q){ return q.id; }), label);
+      var seeds = {};
+      if (cfg.vary !== false) qs.forEach(function(q){ if (V.has(q.id)) seeds[q.id] = newSeed(); });
+      startTest(qs.map(function(q){ return q.id; }), label, seeds);
     };
     if (t && !t.finished) ask('Replace your current test?', 'You have a test in progress. Starting a new one will discard it.', 'Start new test').then(function(ok){ if (ok) go(); });
     else go();
@@ -690,7 +722,7 @@ view.addEventListener('click', function(e){
   }
   else if (act === 'retake'){
     var lbl = t.label.replace(/ \(retake\)$/, '') + ' (retake)';
-    startTest(t.ids.slice(), lbl);
+    startTest(t.ids.slice(), lbl, t.seeds);
   }
 });
 view.addEventListener('input', function(e){
@@ -704,6 +736,7 @@ view.addEventListener('input', function(e){
 view.addEventListener('change', function(e){
   var el = e.target;
   if (el.id === 'est'){ cfg.est = el.checked; saveCfg(); updateSummary(); }
+  if (el.id === 'vary'){ cfg.vary = el.checked; saveCfg(); }
   if (el.id === 'marksNum') setMarks(el.value);
   if (el.dataset.aw){ var t = getTest(), v = t.awarded[el.dataset.aw]; el.value = v == null ? '' : v; }
 });
