@@ -207,6 +207,12 @@ figure{background:transparent}
 #gate small{color:var(--muted)}
 #gate .err{color:var(--red);min-height:1.2em;font-size:.85rem}
 body.locked .wrap{display:none}
+.grades{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.grades button{border:none;background:transparent;padding:5px 12px;font-size:.82rem;cursor:pointer;color:var(--muted)}
+.grades button.on{background:var(--blue);color:var(--blue-ink)}
+.fig-missing{border:1px dashed var(--line);border-radius:6px;padding:36px 24px;min-width:220px;text-align:center;color:var(--muted);font-size:.85rem}
+.note-line{color:var(--muted);font-size:.82rem;margin-top:10px}
+@media (max-width:520px){.grades button{padding:5px 8px}}
 @media (max-width:520px){
   .nav{gap:10px;padding:10px 14px}
   .logo{font-size:1.2rem}
@@ -232,6 +238,7 @@ body.locked .wrap{display:none}
     <a class="link" data-route="bank" href="#/bank"><span class="long">Question </span>Bank</a>
     <a class="link" data-route="test" href="#/test" id="navTest" hidden>Test</a>
     <span class="spacer"></span>
+    <div class="grades" role="group" aria-label="Grade"><button data-grade="11">Grade 11</button><button data-grade="12">Grade 12</button></div>
     <button class="icon-btn" id="theme" aria-label="Toggle dark mode" title="Toggle dark mode">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
     </button>
@@ -310,6 +317,10 @@ function ask(title, text, yes){
 
 // ---------- state
 var cfg = store.get('tb2-cfg', null) || { topics: CH.map(function(_, i){ return i; }), marks: 40, est: true };
+if (!cfg.grade) cfg.grade = '11';
+if (!cfg.seen12){ CH.forEach(function(c, i){ if (c.grade === '12' && cfg.topics.indexOf(i) === -1) cfg.topics.push(i); }); cfg.seen12 = true; }
+function gradeCh(){ return CH.map(function(_, i){ return i; }).filter(function(i){ return CH[i].grade === cfg.grade; }); }
+function inGrade(q){ return CH[q.ch].grade === cfg.grade; }
 function saveCfg(){ store.set('tb2-cfg', cfg); }
 function getTest(){ return store.get('tb2-test', null); }
 function saveTest(t){ store.set('tb2-test', t); }
@@ -323,7 +334,7 @@ function togglePause(){
 }
 
 function pool(){
-  return Q.filter(function(q){ return cfg.topics.indexOf(q.ch) !== -1 && (cfg.est || !q.est); });
+  return Q.filter(function(q){ return inGrade(q) && !q.nofig && cfg.topics.indexOf(q.ch) !== -1 && (cfg.est || !q.est); });
 }
 // pick questions whose marks sum as close to target as possible without going over
 function pick(items, target){
@@ -369,8 +380,8 @@ function saveHistory(t){
 // ---------- views
 function viewHome(){
   var t = getTest(), hist = store.get('tb2-history', []);
-  var cards = CH.map(function(c, i){
-    var qs = Q.filter(function(q){ return q.ch === i; });
+  var cards = gradeCh().map(function(i){
+    var c = CH[i], qs = Q.filter(function(q){ return q.ch === i; });
     var est = qs.filter(function(q){ return q.est; }).length;
     return '<button class="topic" data-topic="' + i + '" aria-pressed="' + (cfg.topics.indexOf(i) !== -1) + '">' +
       '<span class="box"></span><div><strong>' + esc(c.title) + '</strong><span>' + qs.length + ' questions' +
@@ -394,15 +405,18 @@ function viewHome(){
 
   view.innerHTML =
     '<div class="grid"><section>' + banner +
-    '<h1>Generate a test</h1><p class="sub">Pick the topics, set the marks, and you get one minute per mark.</p>' +
+    '<h1>Generate a Grade ' + cfg.grade + ' test</h1><p class="sub">Pick the topics, set the marks, and you get one minute per mark.</p>' +
     '<div class="section-label">Topics</div><div class="topics">' + cards + '</div>' +
     '<div class="section-label">Total marks</div>' +
     '<div class="row"><input type="range" id="marks" min="5" max="150" step="1" value="' + cfg.marks + '">' +
     '<input class="num" id="marksNum" type="number" min="5" max="150" value="' + cfg.marks + '"></div>' +
     '<div class="chips" style="margin-top:12px">' + presets + '</div>' +
-    '<label class="check"><input type="checkbox" id="est"' + (cfg.est ? ' checked' : '') + '><span>Include questions without printed marks ' +
-    '<span class="empty">(the probability worksheet and most of Logarithmics 2023–24 — marks are estimated)</span></span></label>' +
-    '<div class="summary" id="summary"></div><div id="warn"></div>' +
+    (Q.some(function(q){ return inGrade(q) && q.est; }) ? '<label class="check"><input type="checkbox" id="est"' + (cfg.est ? ' checked' : '') + '><span>Include questions without printed marks ' +
+    '<span class="empty">(marks are estimated)</span></span></label>' : '') +
+    '<div class="summary" id="summary"></div><div id="warn"></div>' + (function(){
+      var n = Q.filter(function(q){ return inGrade(q) && q.nofig; }).length;
+      return n ? '<p class="note-line">' + n + ' question' + (n > 1 ? 's are' : ' is') + ' left out of tests until ' + (n > 1 ? 'their figures are' : 'its figure is') + ' added.</p>' : '';
+    })() +
     '<div class="actions"><button class="btn wide" id="go">Start test</button></div>' +
     '</section><aside>' +
     '<div class="score"><div class="big">' + (avg == null ? '—' : avg.toFixed(1) + '%') + '</div>' +
@@ -420,7 +434,7 @@ function updateSummary(){
     '<div><b>' + p.length + '</b><small>questions in pool</small></div>' +
     '<div><b>' + avail + '</b><small>marks available</small></div>';
   var w = '';
-  if (!cfg.topics.length) w = 'Choose at least one topic.';
+  if (!gradeCh().some(function(i){ return cfg.topics.indexOf(i) !== -1; })) w = 'Choose at least one topic.';
   else if (!p.length) w = 'These topics only have questions with estimated marks — tick the box above to include them.';
   else if (cfg.marks > avail) w = 'Only ' + avail + ' marks are available for these topics, so the test will use every question.';
   $('#warn').innerHTML = w ? '<div class="alert">' + w + '</div>' : '';
@@ -530,15 +544,15 @@ function bankQuestion(q, withSource){
 }
 function viewBank(){
   var chips = '<button class="chip' + (bankState.ch === -1 ? ' on' : '') + '" data-bch="-1">All</button>' +
-    CH.map(function(c, i){ return '<button class="chip' + (bankState.ch === i ? ' on' : '') + '" data-bch="' + i + '">' + esc(c.title) + '</button>'; }).join('');
-  view.innerHTML = '<div style="margin-top:40px"><h1>Question bank</h1><p class="sub">' + Q.length + ' questions across ' + CH.length + ' topics.</p>' +
+    gradeCh().map(function(i){ return '<button class="chip' + (bankState.ch === i ? ' on' : '') + '" data-bch="' + i + '">' + esc(CH[i].title) + '</button>'; }).join('');
+  view.innerHTML = '<div style="margin-top:40px"><h1>Grade ' + cfg.grade + ' question bank</h1><p class="sub">' + Q.filter(inGrade).length + ' questions across ' + gradeCh().length + ' topics.</p>' +
     '<div class="filters"><input class="search" id="bsearch" type="search" placeholder="Search questions…" value="' + esc(bankState.term) + '"></div>' +
     '<div class="chips" style="margin-bottom:22px">' + chips + '</div><div id="blist"></div></div>';
   renderBankList();
 }
 function renderBankList(){
   var box = $('#blist'), term = bankState.term.trim().toLowerCase();
-  var qs = Q.filter(function(q){ return bankState.ch === -1 || q.ch === bankState.ch; });
+  var qs = Q.filter(function(q){ return inGrade(q) && (bankState.ch === -1 || q.ch === bankState.ch); });
   if (term){
     var hits = qs.filter(function(q){ return q.text.indexOf(term) !== -1; });
     box.innerHTML = hits.length ? '<div class="paper" open><div class="inner">' + hits.slice(0, 60).map(function(q){ return bankQuestion(q, true); }).join('') + '</div></div>' +
@@ -574,6 +588,7 @@ function route(){
   var r = (location.hash.replace(/^#\/?/, '') || 'home').split('?')[0];
   if (r === 'results') r = 'results';
   $$('.nav a.link').forEach(function(a){ a.classList.toggle('on', a.dataset.route === (r === 'results' ? 'test' : r)); });
+  $$('.grades button').forEach(function(b){ b.classList.toggle('on', b.dataset.grade === cfg.grade); });
   var t = getTest();
   $('#navTest').hidden = !(t && (!t.finished || r === 'results'));
   $('#navTest').textContent = t && t.finished ? 'Results' : 'Test';
@@ -584,6 +599,13 @@ function route(){
   tick();
 }
 window.addEventListener('hashchange', route);
+$$('.grades button').forEach(function(b){
+  b.onclick = function(){
+    if (cfg.grade === b.dataset.grade) return;
+    cfg.grade = b.dataset.grade; saveCfg(); bankState.ch = -1;
+    if (/^#\/(test|results)/.test(location.hash)) location.hash = '#/'; else route();
+  };
+});
 
 // ---------- timer
 function tick(){
@@ -611,8 +633,8 @@ view.addEventListener('click', function(e){
     var go = function(){
       var p = pool(), qs = pick(p, Math.min(cfg.marks, sum(p, function(q){ return q.marks; })));
       qs.sort(function(a, b){ return a.ch - b.ch; });
-      var names = CH.filter(function(_, i){ return cfg.topics.indexOf(i) !== -1; }).map(function(c){ return c.title; });
-      var label = names.length === CH.length ? 'Mixed test' : names.length > 2 ? names.length + '-topic test' : names.join(' & ');
+      var gc = gradeCh(), names = gc.filter(function(i){ return cfg.topics.indexOf(i) !== -1; }).map(function(i){ return CH[i].title; });
+      var label = 'Gr ' + cfg.grade + ' · ' + (names.length === gc.length ? 'Mixed test' : names.length > 2 ? names.length + '-topic test' : names.join(' & '));
       startTest(qs.map(function(q){ return q.id; }), label);
     };
     if (t && !t.finished) ask('Replace your current test?', 'You have a test in progress. Starting a new one will discard it.', 'Start new test').then(function(ok){ if (ok) go(); });

@@ -1,4 +1,4 @@
-"""Build testbank/index.html from testbank/questions.md.
+"""Build testbank/index.html from questions.md (Grade 11) and gr12/questions.md (Grade 12).
 
 Usage:  python testbank/build.py
 No dependencies. Math is left as $...$ and rendered in the browser by KaTeX.
@@ -10,8 +10,11 @@ import re
 from pathlib import Path
 
 HERE = Path(__file__).parent
-SRC = HERE / "questions.md"
 OUT = HERE / "index.html"
+# (grade, markdown file, folder its figures/ paths are relative to, question-id prefix)
+SOURCES = [("11", "questions.md", "", ""), ("12", "gr12/questions.md", "gr12/", "g12")]
+FIG_BASE = ""      # set per source while rendering
+MISSING = []       # figure files referenced but not present
 
 
 # ---------------------------------------------------------------- inline text
@@ -29,7 +32,7 @@ def inline(text):
 
     def em(m):
         body = m.group(1)
-        cls = ' class="note"' if body.startswith("(") else ""
+        cls = ' class="note"' if body[:1] in "([" else ""
         return f"<em{cls}>{body}</em>"
 
     text = re.sub(r"\*(?!\s)([^*]+?)\*", em, text)
@@ -47,8 +50,7 @@ def plain(text):
 
 # -------------------------------------------------------------------- figures
 def svg_markup(path):
-    svg = (HERE / path).read_text(encoding="utf8").strip()
-    return svg
+    return (HERE / path).read_text(encoding="utf8").strip()
 
 
 def figure(images, caption):
@@ -56,7 +58,14 @@ def figure(images, caption):
     fid, cap = (m.group(1), m.group(2)) if m else ("", caption.strip("*"))
     cells = []
     for alt, src in images:
-        if src.endswith(".svg"):
+        src = FIG_BASE + src
+        if not (HERE / src).exists():
+            MISSING.append(src)
+            cells.append(
+                f'<div class="fig-cell"><div class="fig-missing">Figure not available yet</div>'
+                f'<span class="fig-tag">{html.escape(alt)}</span></div>'
+            )
+        elif src.endswith(".svg"):
             cells.append(
                 f'<div class="fig-cell"><div class="fig-svg">{svg_markup(src)}</div>'
                 f'<span class="fig-tag">Redrawn</span></div>'
@@ -68,7 +77,7 @@ def figure(images, caption):
                 f'<span class="fig-tag">{html.escape(alt)}</span></div>'
             )
     return (
-        f'<figure id="fig-{fid}"><div class="fig-row">{"".join(cells)}</div>'
+        f'<figure data-fig="{fid}"><div class="fig-row">{"".join(cells)}</div>'
         f"<figcaption>{inline(cap)}</figcaption></figure>"
     )
 
@@ -82,6 +91,8 @@ def parse(md):
 
     for raw in md.splitlines():
         line = raw.rstrip()
+        if re.fullmatch(r"\[\d+\]", line.strip()):  # bare mark allocation on its own line
+            line = f"**{line.strip()}**"
         if line.startswith("## "):
             ch = {"title": line[3:], "papers": []}
             chapters.append(ch)
@@ -123,6 +134,8 @@ def render_question(q):
         elif b.startswith("*Figure ("):
             out.append(figure(pending, b))
             pending = []
+        elif all(l.startswith("- ") for l in b.splitlines()):
+            out.append("<ul>" + "".join(f"<li>{inline(l[2:])}</li>" for l in b.splitlines()) + "</ul>")
         elif b.startswith("|"):
             rows = [
                 [c.strip() for c in r.strip().strip("|").split("|")]
@@ -151,7 +164,7 @@ def slug(s):
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
 
 
-def marks_of(lines, ch_idx):
+def marks_of(lines, per_leaf):
     """Sum the printed **[n]** marks. Unmarked questions get an estimate (flagged)."""
     text = "\n".join(lines)
     ms = [int(x) for x in re.findall(r"\*\*\[(\d+)\]\*\*", text)]
@@ -164,35 +177,45 @@ def marks_of(lines, ch_idx):
         nxt = toks[i + 1] if i + 1 < len(toks) else None
         if not t.startswith("(") or not (nxt and not nxt.startswith("(")):
             leaves += 1
-    return max(1, leaves) * (1 if ch_idx == 4 else 3), True
+    return max(1, leaves) * per_leaf, True
 
 
 def short_title(t):
-    return re.sub(r"^Chapter \d+\s*[—-]\s*", "", t)
+    return re.sub(r"^Chapter [\d–-]+\s*[—-]\s*", "", t)
 
 
-def build(chapters):
-    data = {"chapters": [{"title": short_title(c["title"])} for c in chapters], "questions": []}
-    for ci, ch in enumerate(chapters):
-        for pi, p in enumerate(ch["papers"], 1):
-            sec = ""
-            paper_total = 0
-            for kind, item in p["items"]:
-                if kind == "section":
-                    sec = item
-                    continue
-                num = re.sub(r"[^0-9]", "", item["title"])
-                marks, est = marks_of(item["lines"], ci)
-                if not est:
-                    paper_total += marks
-                data["questions"].append({
-                    "id": f"c{ci + 1}p{pi}{slug(sec)}q{num}",
-                    "ch": ci, "paper": p["title"], "section": sec, "num": int(num),
-                    "marks": marks, "est": est,
-                    "html": render_question(item),
-                    "text": plain(" ".join(item["lines"])),
-                })
-            print(f"  {p['title']}: {paper_total} printed marks")
+def build():
+    global FIG_BASE
+    data = {"chapters": [], "questions": []}
+    for grade, md, base, prefix in SOURCES:
+        FIG_BASE = base
+        for ch in parse((HERE / md).read_text(encoding="utf8")):
+            ci = len(data["chapters"])
+            title = short_title(ch["title"])
+            data["chapters"].append({"title": title, "grade": grade})
+            local = sum(1 for c in data["chapters"] if c["grade"] == grade)  # 1-based within the grade
+            per_leaf = 1 if "Probability" in title else 3
+            for pi, p in enumerate(ch["papers"], 1):
+                sec = ""
+                paper_total = 0
+                for kind, item in p["items"]:
+                    if kind == "section":
+                        sec = item
+                        continue
+                    num = re.sub(r"[^0-9]", "", item["title"])
+                    marks, est = marks_of(item["lines"], per_leaf)
+                    if not est:
+                        paper_total += marks
+                    before = len(MISSING)
+                    html_ = render_question(item)
+                    data["questions"].append({
+                        "id": f"{prefix}c{local}p{pi}{slug(sec)}q{num}",
+                        "ch": ci, "paper": p["title"], "section": sec, "num": int(num),
+                        "marks": marks, "est": est, "nofig": len(MISSING) > before,
+                        "html": html_,
+                        "text": plain(" ".join(item["lines"])),
+                    })
+                print(f"  Gr{grade} {p['title']}: {paper_total} printed marks")
     return data
 
 
@@ -200,9 +223,13 @@ TEMPLATE = (HERE / "template.html").read_text(encoding="utf8")
 
 if __name__ == "__main__":
     import json
-    chapters = parse(SRC.read_text(encoding="utf8"))
-    data = build(chapters)
+    data = build()
     blob = json.dumps(data, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
     OUT.write_text(TEMPLATE.replace("{{DATA}}", blob), encoding="utf8")
-    n = len(data["questions"])
-    print(f"wrote {OUT} - {n} questions, {sum(1 for q in data['questions'] if q['est'])} with estimated marks")
+    qs = data["questions"]
+    for g in ("11", "12"):
+        gq = [q for q in qs if data["chapters"][q["ch"]]["grade"] == g]
+        print(f"Grade {g}: {len(gq)} questions, {sum(q['est'] for q in gq)} estimated, {sum(q['nofig'] for q in gq)} missing a figure")
+    if MISSING:
+        print(f"missing figure files ({len(MISSING)}): " + " ".join(sorted(set(MISSING))))
+    print(f"wrote {OUT}")
