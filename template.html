@@ -211,6 +211,8 @@ body.locked .wrap{display:none}
 .grades button{border:none;background:transparent;padding:5px 12px;font-size:.82rem;cursor:pointer;color:var(--muted)}
 .grades button.on{background:var(--blue);color:var(--blue-ink)}
 .fig-missing{border:1px dashed var(--line);border-radius:6px;padding:36px 24px;min-width:220px;text-align:center;color:var(--muted);font-size:.85rem}
+.copy{margin-left:auto;background:none;border:1px solid var(--line);border-radius:6px;padding:2px 10px;font-size:.75rem;color:var(--muted);cursor:pointer}
+.copy:hover{color:var(--blue);border-color:var(--blue)}
 .note-line{color:var(--muted);font-size:.82rem;margin-top:10px}
 @media (max-width:520px){.grades button{padding:5px 8px}}
 @media (max-width:520px){
@@ -253,6 +255,7 @@ body.locked .wrap{display:none}
 <script id="data" type="application/json">{{DATA}}</script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/copy-tex.min.js"></script>
 <script>
 (function(){
 'use strict';
@@ -278,6 +281,15 @@ function fmt(s){
 function shuffle(a){ for (var i = a.length - 1; i > 0; i--){ var j = Math.random() * (i + 1) | 0, t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
 function source(q){
   return CH[q.ch].title + ' · ' + q.paper + (q.section ? ' · ' + q.section : '') + ' · Question ' + q.num;
+}
+function copyBtn(q){ return '<button class="copy" data-copy="' + q.id + '" title="Copy question as text with LaTeX">Copy</button>'; }
+function copyText(text, btn){
+  function done(){ var o = btn.textContent; btn.textContent = 'Copied'; setTimeout(function(){ btn.textContent = o; }, 1400); }
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, fallback); else fallback();
+  function fallback(){
+    var ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); done(); } catch(e){} ta.remove();
+  }
 }
 function marksLabel(q){ return (q.est ? '≈ ' : '') + q.marks + (q.marks === 1 ? ' mark' : ' marks'); }
 function typeset(el){
@@ -472,7 +484,7 @@ function viewTest(){
     '<h1>' + esc(t.label) + '</h1>' +
     '<div class="progress"><div class="track"><i style="width:' + pct + '%"></i></div><span>' + pct + '%</span></div>' +
     '<div class="qhead"><b>Question ' + (t.idx + 1) + '/' + n + ':</b><span class="pill' + (q.est ? ' est' : '') + '">' + marksLabel(q) + '</span>' +
-    '<span class="pill only-narrow t-val"></span></div>' +
+    '<span class="pill only-narrow t-val"></span>' + copyBtn(q) + '</div>' +
     (t.pausedAt ? '<div class="paused-cover"><p>Test paused · ' + fmt(remaining(t)) + ' left</p><button class="btn" data-act="pause">Resume</button></div>' :
     '<div class="qbody">' + q.html + '</div>') +
     '<details class="src"><summary>Source</summary><p>' + esc(source(q)) + '</p></details>' +
@@ -511,7 +523,7 @@ function viewResults(){
     return '<article class="card" id="r-' + id + '"><header><span class="st">' + rowIcon(t, id) + '</span><b>Question ' + (i + 1) + '</b>' +
       '<span class="pill' + (q.est ? ' est' : '') + '">' + marksLabel(q) + '</span>' +
       (t.status[id] === 'flag' ? '<span class="pill est">flagged</span>' : '') +
-      '<div class="award"><input class="num" type="number" min="0" max="' + q.marks + '" step="1" data-aw="' + id + '" value="' + (a == null ? '' : a) + '" placeholder="–" aria-label="Marks awarded">' +
+      copyBtn(q).replace('class="copy"', 'class="copy" style="margin-left:0"') + '<div class="award"><input class="num" type="number" min="0" max="' + q.marks + '" step="1" data-aw="' + id + '" value="' + (a == null ? '' : a) + '" placeholder="–" aria-label="Marks awarded">' +
       '<span class="empty">/ ' + q.marks + '</span><button class="chip" data-full="' + id + '">Full</button><button class="chip" data-zero="' + id + '">0</button></div></header>' +
       '<div class="meta" style="color:var(--muted);font-size:.8rem;margin-top:4px">' + esc(source(q)) + '</div>' +
       (t.notes[id] ? '<p style="white-space:pre-wrap;font-size:.88rem;background:var(--blue-soft);padding:8px 12px;border-radius:6px">' + esc(t.notes[id]) + '</p>' : '') +
@@ -540,7 +552,7 @@ function award(id, v){
 var bankState = { ch: -1, term: '' };
 function bankQuestion(q, withSource){
   return '<article class="bank-q"><header><b>' + (withSource ? esc(source(q)) : 'Question ' + q.num) + '</b>' +
-    '<span class="pill' + (q.est ? ' est' : '') + '">' + marksLabel(q) + '</span></header><div class="qbody">' + q.html + '</div></article>';
+    '<span class="pill' + (q.est ? ' est' : '') + '">' + marksLabel(q) + '</span>' + copyBtn(q) + '</header><div class="qbody">' + q.html + '</div></article>';
 }
 function viewBank(){
   var chips = '<button class="chip' + (bankState.ch === -1 ? ' on' : '') + '" data-bch="-1">All</button>' +
@@ -622,6 +634,7 @@ setInterval(tick, 1000);
 // ---------- events
 view.addEventListener('click', function(e){
   var el = e.target.closest('button, [data-go]'); if (!el) return;
+  if (el.dataset.copy){ copyText(byId[el.dataset.copy].copy, el); return; }
   var t = getTest();
   if (el.dataset.topic != null){
     var i = +el.dataset.topic, k = cfg.topics.indexOf(i);

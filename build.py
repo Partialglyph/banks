@@ -44,6 +44,30 @@ def inline(text):
     )
 
 
+def copy_text(lines, num, marks, est):
+    """The question as pasteable text: LaTeX math kept as $...$, figures as [Figure: caption]."""
+    maths = []
+
+    def stash(m):
+        maths.append(m.group(0))
+        return f"\x00{len(maths) - 1}\x00"
+
+    out = []
+    for line in lines:
+        line = re.sub(r"\$[^$]+\$", stash, line)
+        if re.fullmatch(r"\s*!\[.*?\]\(.*?\)\s*", line):
+            continue
+        m = re.fullmatch(r"\*Figure \(.+?\):\s*(.*)\*", line.strip())
+        if m:
+            line = f"[Figure: {m.group(1)}]"
+        line = re.sub(r"\*\*(.+?)\*\*", r"\1", line)
+        line = re.sub(r"\*(?!\s)([^*]+?)\*", r"\1", line)
+        out.append(line)
+    body = re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+    body = re.sub(r"\x00(\d+)\x00", lambda m: maths[int(m.group(1))], body)
+    return f"Question {num} ({'~' if est else ''}{marks} marks)\n\n{body}"
+
+
 def plain(text):
     return re.sub(r"\s+", " ", re.sub(r"[*$\\{}]|!\[.*?\]\(.*?\)", " ", text)).lower()
 
@@ -214,6 +238,7 @@ def build():
                         "marks": marks, "est": est, "nofig": len(MISSING) > before,
                         "html": html_,
                         "text": plain(" ".join(item["lines"])),
+                        "copy": copy_text(item["lines"], int(num), marks, est),
                     })
                 print(f"  Gr{grade} {p['title']}: {paper_total} printed marks")
     return data
